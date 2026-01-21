@@ -1,4 +1,4 @@
-# :gh <✨/sparkle>
+# $gh <✨/sparkle>
 
 A GitHub CLI extension that brings the VS Code "Generate Commit Message"
 experience to your terminal. It reads staged changes, asks GitHub Models for a
