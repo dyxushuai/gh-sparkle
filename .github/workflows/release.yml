@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -24,26 +24,38 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
+            asset: gh-sparkle-linux-amd64
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-13
+            asset: gh-sparkle-darwin-amd64
           - target: aarch64-apple-darwin
             os: macos-latest
+            asset: gh-sparkle-darwin-arm64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            asset: gh-sparkle-windows-amd64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: taiki-e/upload-rust-binary-action@v1
-        with:
-          bin: gh-sparkle
-          target: ${{ matrix.target }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: rui314/setup-mold@v1
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: Swatinem/rust-cache@v2
+      - name: Build binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Prepare asset
+        shell: bash
+        run: |
+          mkdir -p dist
+          bin="target/${{ matrix.target }}/release/gh-sparkle"
+          if [[ "${{ matrix.asset }}" == *.exe ]]; then
+            bin="${bin}.exe"
+          fi
+          cp "$bin" "dist/${{ matrix.asset }}"
+      - name: Upload asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" "dist/${{ matrix.asset }}" --clobber
