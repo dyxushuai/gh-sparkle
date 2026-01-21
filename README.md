@@ -4,15 +4,21 @@ A GitHub CLI extension that brings the VS Code "Generate Commit Message"
 experience to your terminal. It reads staged changes, asks GitHub Models for a
 Conventional Commit message, then commits automatically.
 
-## Why the name
+Built for large diffs: it summarizes, trims, and retries to stay within model
+limits without breaking the flow.
+
+## Why sparkle
 
 The name comes from the ✨/sparkle icon used by VS Code's "Generate Commit
-Message" feature.
+Message" feature. I wanted the same flow, but inside `gh`. `sparkle` keeps that
+loop tight: stage, generate, commit.
 
-## Why this exists
+## Large changes handling
 
-I wanted the same flow as VS Code's commit message generator, but inside `gh`.
-`sparkle` keeps that loop tight: stage, generate, commit.
+`sparkle` is optimized for big diffs by combining a summary with a trimmed
+patch. It avoids API failures by capping input size and retrying with a smaller
+budget when needed. Input budgets are defined in code and can be tuned in
+`src/main.rs`.
 
 ## Features
 
@@ -20,15 +26,6 @@ I wanted the same flow as VS Code's commit message generator, but inside `gh`.
 - Defaults to `openai/gpt-4o-mini` with safe input trimming for large changes
 - Supports `--language`, `--examples`, and `--model`
 - Commits staged changes automatically
-
-## Large changes handling
-
-`sparkle` is optimized for big diffs by combining a summary with a trimmed
-patch. It avoids API failures by capping input size and retrying with a smaller
-budget when needed.
-
-Input budgets are currently defined in code and can be adjusted in
-`src/main.rs`.
 
 ## Prerequisites
 
