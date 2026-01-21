@@ -69,6 +69,7 @@ struct ChoiceMessage {
     content: String,
 }
 
+/// LLM client for generating commit messages.
 pub struct Client {
     token: String,
     http: HttpClient,
