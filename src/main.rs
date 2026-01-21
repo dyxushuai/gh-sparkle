@@ -193,10 +193,27 @@ fn sanitize_commit_message(message: &str) -> String {
     for line in message.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("```") {
+            let rest = trimmed.trim_start_matches("```").trim_start();
+            if !rest.is_empty() && !is_fence_language(rest) {
+                lines.push(rest);
+            }
             continue;
         }
         lines.push(line);
     }
 
-    lines.join("\n").trim().to_string()
+    let mut sanitized = lines.join("\n").trim().to_string();
+    if sanitized.starts_with("```") {
+        sanitized = sanitized.trim_start_matches("```").trim_start().to_string();
+    }
+    if sanitized.ends_with("```") {
+        sanitized = sanitized.trim_end_matches("```").trim_end().to_string();
+    }
+
+    sanitized
+}
+
+fn is_fence_language(tag: &str) -> bool {
+    tag.chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
