@@ -6,7 +6,7 @@ Conventional Commit message, then commits automatically.
 
 ## Why the name
 
-The name comes from the ✨/sparkles icon used by VS Code's "Generate Commit
+The name comes from the ✨/sparkle icon used by VS Code's "Generate Commit
 Message" feature.
 
 ## Why this exists
