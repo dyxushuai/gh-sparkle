@@ -116,7 +116,7 @@ impl Client {
 
         let content = response
             .choices
-            .get(0)
+            .first()
             .ok_or("no response generated from the model")?
             .message
             .content
