@@ -1,7 +1,20 @@
 # gh-sparkle
 
-A GitHub CLI extension that generates AI-powered conventional commit messages
-from staged git changes using GitHub Models, then commits automatically.
+A GitHub CLI extension that brings the VS Code "Generate Commit Message"
+experience to your terminal. It reads staged changes, asks GitHub Models for a
+Conventional Commit message, then commits automatically.
+
+## Why this exists
+
+I wanted the same flow as VS Code's commit message generator, but inside `gh`.
+`sparkle` keeps that loop tight: stage, generate, commit.
+
+## Features
+
+- Copilot-style commit message generation from staged diffs
+- Defaults to `openai/gpt-4o-mini` with safe input trimming for large changes
+- Supports `--language`, `--examples`, and `--model`
+- Commits staged changes automatically
 
 ## Prerequisites
 
@@ -33,7 +46,7 @@ gh sparkle
 
 ```bash
 # Generate commit message in a different language
-gh sparkle --language russian
+gh sparkle --language chinese
 
 # Add previous commit messages as examples (default 3 when flag is present)
 gh sparkle --examples
@@ -49,6 +62,7 @@ gh sparkle --model xai/grok-3-mini
 
 - The extension commits automatically using the generated message.
 - If there are no staged changes, it exits without committing.
+- Large diffs are truncated to fit model input limits.
 
 ## Upgrade
 
