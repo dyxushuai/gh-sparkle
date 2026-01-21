@@ -7,7 +7,11 @@ use clap::Parser;
 use std::error::Error;
 
 const EXTENSION_NAME: &str = "sparkle";
+const DEFAULT_MODEL: &str = "openai/gpt-4o-mini";
 const MAX_EXAMPLES: usize = 20;
+const PRIMARY_INPUT_BUDGET_TOKENS: usize = 12_000;
+const FALLBACK_INPUT_BUDGET_TOKENS: usize = 6_000;
+const TOKEN_CHAR_RATIO: usize = 4;
 
 #[derive(Parser)]
 #[command(
@@ -25,7 +29,7 @@ struct Cli {
     examples: Option<String>,
 
     /// GitHub Models model to use
-    #[arg(short = 'm', long = "model", default_value = "openai/gpt-4o")]
+    #[arg(short = 'm', long = "model", default_value = DEFAULT_MODEL)]
     model: String,
 }
 
@@ -45,6 +49,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    let staged_summary = git::get_staged_summary()?;
+
     let examples_count = parse_examples_count(cli.examples)?;
 
     let mut latest_commit_messages = String::new();
@@ -60,14 +66,44 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     println!("  Language for commit message: {}", cli.language);
 
-    let commit_msg = llm_client.generate_commit_message(
+    let (changes_context, truncated) = build_changes_context(
+        &staged_summary,
         &staged_changes,
+        PRIMARY_INPUT_BUDGET_TOKENS,
+    );
+
+    if truncated {
+        println!("  Input too large; diff truncated to fit token budget.");
+    }
+
+    let commit_msg = match llm_client.generate_commit_message(
+        &changes_context,
         &cli.model,
         &cli.language,
         &latest_commit_messages,
-    )?;
+    ) {
+        Ok(message) => message,
+        Err(err) if is_payload_too_large(&err.to_string()) => {
+            println!("  Request too large; retrying with a smaller input budget.");
+            let (fallback_context, fallback_truncated) = build_changes_context(
+                &staged_summary,
+                &staged_changes,
+                FALLBACK_INPUT_BUDGET_TOKENS,
+            );
+            if fallback_truncated {
+                println!("  Diff truncated for retry.");
+            }
+            llm_client.generate_commit_message(
+                &fallback_context,
+                &cli.model,
+                &cli.language,
+                &latest_commit_messages,
+            )?
+        }
+        Err(err) => return Err(err),
+    };
 
-    let mut commit_msg = commit_msg.trim().to_string();
+    let mut commit_msg = sanitize_commit_message(&commit_msg);
     if commit_msg.is_empty() {
         return Err("generated commit message is empty".into());
     }
@@ -98,4 +134,69 @@ fn parse_examples_count(raw: Option<String>) -> Result<usize, Box<dyn Error>> {
     }
 
     Ok(count)
+}
+
+fn build_changes_context(summary: &str, diff: &str, budget_tokens: usize) -> (String, bool) {
+    let max_chars = budget_tokens.saturating_mul(TOKEN_CHAR_RATIO);
+    let summary_header = "Summary of staged changes:\n";
+    let diff_header = "\n\nStaged diff (truncated if necessary):\n";
+
+    let mut truncated = false;
+    let mut context = String::new();
+    context.push_str(summary_header);
+
+    let remaining_for_summary = max_chars.saturating_sub(context.len());
+    let summary_trimmed = truncate_to_len(summary, remaining_for_summary);
+    if summary_trimmed.len() < summary.len() {
+        truncated = true;
+    }
+    context.push_str(&summary_trimmed);
+
+    let remaining_for_diff = max_chars.saturating_sub(context.len() + diff_header.len());
+    if remaining_for_diff == 0 {
+        return (context, truncated);
+    }
+
+    let diff_trimmed = truncate_to_len(diff, remaining_for_diff);
+    if diff_trimmed.len() < diff.len() {
+        truncated = true;
+    }
+
+    context.push_str(diff_header);
+    context.push_str(&diff_trimmed);
+
+    (context, truncated)
+}
+
+fn truncate_to_len(input: &str, max_len: usize) -> String {
+    if input.len() <= max_len {
+        return input.to_string();
+    }
+
+    let mut end = max_len;
+    while end > 0 && !input.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    input[..end].to_string()
+}
+
+fn is_payload_too_large(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("status 413")
+        || lower.contains("payload too large")
+        || lower.contains("tokens_limit_reached")
+}
+
+fn sanitize_commit_message(message: &str) -> String {
+    let mut lines = Vec::new();
+    for line in message.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            continue;
+        }
+        lines.push(line);
+    }
+
+    lines.join("\n").trim().to_string()
 }

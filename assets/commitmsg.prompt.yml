@@ -1,5 +1,8 @@
 name: Commit Message Generator
 description: Generates professional commit messages based on git changes
+modelParameters:
+  temperature: 0.2
+  topP: 0.9
 messages:
   - role: system
     content: >

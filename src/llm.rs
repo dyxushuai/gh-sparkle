@@ -17,11 +17,20 @@ struct PromptConfig {
     messages: Vec<PromptMessage>,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ModelParameters {
     temperature: f64,
     top_p: f64,
+}
+
+impl Default for ModelParameters {
+    fn default() -> Self {
+        Self {
+            temperature: 0.2,
+            top_p: 0.9,
+        }
+    }
 }
 
 #[derive(Deserialize)]

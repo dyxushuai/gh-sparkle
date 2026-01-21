@@ -9,10 +9,32 @@ pub fn get_staged_changes() -> Result<String, Box<dyn Error>> {
         return Err("current directory is not a git repository".into());
     }
 
-    let output = Command::new("git").args(["diff", "--staged"]).output()?;
+    let output = Command::new("git")
+        .args(["diff", "--staged", "--color=never"])
+        .output()?;
 
     if !output.status.success() {
         return Err(format!("error executing git diff --staged: {}", output.status).into());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+pub fn get_staged_summary() -> Result<String, Box<dyn Error>> {
+    if !is_git_repository() {
+        return Err("current directory is not a git repository".into());
+    }
+
+    let output = Command::new("git")
+        .args(["diff", "--staged", "--stat", "--color=never"])
+        .output()?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "error executing git diff --staged --stat: {}",
+            output.status
+        )
+        .into());
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
