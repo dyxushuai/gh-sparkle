@@ -27,6 +27,9 @@ I wanted the same flow as VS Code's commit message generator, but inside `gh`.
 patch. It avoids API failures by capping input size and retrying with a smaller
 budget when needed.
 
+Input budgets are currently defined in code and can be adjusted in
+`src/main.rs`.
+
 ## Prerequisites
 
 - GitHub CLI installed and authenticated (`gh auth login`)
