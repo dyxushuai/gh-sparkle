@@ -58,6 +58,13 @@ gh sparkle
 
 ### Options
 
+- `-l, --language <LANGUAGE>`: Output language for the commit message.
+  Default: `english`.
+- `-e, --examples[=<N>]`: Include recent commit messages as examples.
+  If provided without a value, it uses `3`. Valid range: `1..=20`.
+- `-m, --model <MODEL>`: GitHub Models model to use.
+  Default: `openai/gpt-4o-mini`.
+
 ```bash
 # Generate commit message in a different language
 gh sparkle --language chinese
