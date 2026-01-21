@@ -217,3 +217,60 @@ fn is_fence_language(tag: &str) -> bool {
     tag.chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_examples_count_accepts_valid_values() {
+        assert_eq!(parse_examples_count(None).unwrap(), 0);
+        assert_eq!(parse_examples_count(Some("3".to_string())).unwrap(), 3);
+    }
+
+    #[test]
+    fn parse_examples_count_rejects_invalid_values() {
+        assert!(parse_examples_count(Some("0".to_string())).is_err());
+        assert!(parse_examples_count(Some("21".to_string())).is_err());
+        assert!(parse_examples_count(Some("nope".to_string())).is_err());
+    }
+
+    #[test]
+    fn build_changes_context_keeps_content_when_budget_allows() {
+        let summary = "summary";
+        let diff = "diff";
+        let (context, truncated) = build_changes_context(summary, diff, 100);
+        assert!(!truncated);
+        assert!(context.contains(summary));
+        assert!(context.contains(diff));
+    }
+
+    #[test]
+    fn build_changes_context_marks_truncation_when_budget_is_small() {
+        let summary = "summary";
+        let diff = "diff";
+        let (context, truncated) = build_changes_context(summary, diff, 1);
+        assert!(truncated);
+        assert!(context.starts_with("Summary of staged changes:"));
+    }
+
+    #[test]
+    fn sanitize_commit_message_removes_code_fences() {
+        let input = "```\nfeat: add tests\n```\n";
+        assert_eq!(sanitize_commit_message(input), "feat: add tests");
+    }
+
+    #[test]
+    fn sanitize_commit_message_preserves_inline_message_after_fence() {
+        let input = "```feat: add tests\n";
+        assert_eq!(sanitize_commit_message(input), "feat: add tests");
+    }
+
+    #[test]
+    fn is_payload_too_large_detects_error_signals() {
+        assert!(is_payload_too_large("status 413"));
+        assert!(is_payload_too_large("Payload Too Large"));
+        assert!(is_payload_too_large("tokens_limit_reached"));
+        assert!(!is_payload_too_large("other error"));
+    }
+}
