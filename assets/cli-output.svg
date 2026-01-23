@@ -1,14 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420">
-  <rect width="1200" height="420" fill="#0d1117"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300">
+  <rect width="1200" height="300" fill="#0d1117"/>
   <style>
     .mono { font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace; font-size: 28px; }
   </style>
-  <text x="60" y="90" class="mono" fill="#ffd60a">⠋</text>
-  <text x="90" y="90" class="mono" fill="#c9d1d9">Step 3 of 6 — Collect staged changes</text>
+  <text x="60" y="70" class="mono" fill="#ffd60a">⠋</text>
+  <text x="90" y="70" class="mono" fill="#c9d1d9">Step 3 of 6 — Collect staged changes</text>
 
-  <text x="60" y="170" class="mono" fill="#c9d1d9">💬 Generated commit message:</text>
+  <text x="60" y="130" class="mono" fill="#c9d1d9">💬 Generated commit message:</text>
 
-  <text x="60" y="250" class="mono" fill="#238636" font-weight="700">feat(cli): add inline spinner output</text>
+  <text x="60" y="190" class="mono" fill="#238636" font-weight="700">feat(cli): add inline spinner output</text>
 
-  <text x="60" y="320" class="mono" fill="#8b949e">Committed staged changes.</text>
+  <text x="60" y="240" class="mono" fill="#8b949e">Committed staged changes.</text>
 </svg>
