@@ -24,7 +24,7 @@ budget when needed. Input budgets and model policy are defined in
 
 - Copilot-style commit message generation from staged diffs
 - Defaults to `auto` with safe input trimming for large changes
-- Animated TUI progress experience in interactive terminals
+- Lightweight inline animation in interactive terminals
 - Supports `--language`, `--examples`, and `--model`
 - Commits staged changes automatically
 
