@@ -7,6 +7,10 @@ Conventional Commit message, then commits automatically.
 Built for large diffs: it summarizes, trims, and retries to stay within model
 limits without breaking the flow.
 
+## CLI Output (Sample)
+
+![CLI output sample](assets/cli-output.svg)
+
 ## Why sparkle
 
 The name comes from the ✨/sparkle icon used by VS Code's "Generate Commit
