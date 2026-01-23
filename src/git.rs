@@ -56,7 +56,7 @@ pub fn get_commit_messages(count: usize) -> Result<String, Box<dyn Error>> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-pub fn commit_with_message(message: &str) -> Result<(), Box<dyn Error>> {
+pub fn commit_with_message(message: &str, quiet: bool) -> Result<(), Box<dyn Error>> {
     if !is_git_repository() {
         return Err("current directory is not a git repository".into());
     }
@@ -64,8 +64,16 @@ pub fn commit_with_message(message: &str) -> Result<(), Box<dyn Error>> {
     let mut child = Command::new("git")
         .args(["commit", "-F", "-"])
         .stdin(Stdio::piped())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(if quiet {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        })
+        .stderr(if quiet {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        })
         .spawn()?;
 
     {

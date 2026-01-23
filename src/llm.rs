@@ -7,37 +7,7 @@ use std::error::Error;
 use std::process::Command;
 use std::time::Duration;
 
-const COMMITMSG_PROMPT_YAML: &str = include_str!("../assets/commitmsg.prompt.yml");
-
-#[derive(Default, Deserialize)]
-struct PromptConfig {
-    #[serde(default)]
-    model_parameters: ModelParameters,
-    #[serde(default)]
-    messages: Vec<PromptMessage>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ModelParameters {
-    temperature: f64,
-    top_p: f64,
-}
-
-impl Default for ModelParameters {
-    fn default() -> Self {
-        Self {
-            temperature: 0.2,
-            top_p: 0.9,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct PromptMessage {
-    role: String,
-    content: String,
-}
+use crate::prompt::PromptConfig;
 
 #[derive(Serialize)]
 struct Request {
@@ -77,12 +47,8 @@ pub struct Client {
 
 impl Client {
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        print!("  Checking GitHub token... ");
-
         let host = resolve_host();
         let token = resolve_token(&host)?;
-
-        println!("Done");
 
         let http = HttpClient::builder()
             .timeout(Duration::from_secs(30))
@@ -93,16 +59,13 @@ impl Client {
 
     pub fn generate_commit_message(
         &self,
+        prompt_config: &PromptConfig,
         changes_summary: &str,
         model: &str,
         language: &str,
         examples: &str,
     ) -> Result<String, Box<dyn Error>> {
-        print!("  Loading prompt configuration... ");
-        let prompt_config = load_prompt_config()?;
-        println!("Done");
-
-        let messages = build_messages(&prompt_config, changes_summary, language, examples);
+        let messages = build_messages(prompt_config, changes_summary, language, examples);
 
         let request = Request {
             messages,
@@ -112,7 +75,6 @@ impl Client {
             stream: false,
         };
 
-        println!("  Calling GitHub Models API ({})...", model);
         let response = self.call_github_models(&request)?;
 
         let content = response
@@ -176,10 +138,6 @@ fn resolve_token(host: &str) -> Result<String, Box<dyn Error>> {
     }
 
     Ok(token)
-}
-
-fn load_prompt_config() -> Result<PromptConfig, Box<dyn Error>> {
-    Ok(serde_yaml::from_str(COMMITMSG_PROMPT_YAML)?)
 }
 
 fn build_messages(

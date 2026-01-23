@@ -2,16 +2,16 @@
 
 mod git;
 mod llm;
+mod prompt;
+mod ui;
 
 use clap::Parser;
+use crossterm::style::Stylize;
 use std::error::Error;
 
 const EXTENSION_NAME: &str = "sparkle";
-const DEFAULT_MODEL: &str = "openai/gpt-4o-mini";
+const DEFAULT_MODEL: &str = "auto";
 const MAX_EXAMPLES: usize = 20;
-const PRIMARY_INPUT_BUDGET_TOKENS: usize = 12_000;
-const FALLBACK_INPUT_BUDGET_TOKENS: usize = 6_000;
-const TOKEN_CHAR_RATIO: usize = 4;
 
 #[derive(Parser)]
 #[command(
@@ -41,6 +41,14 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
+    if ui::Ui::is_tty() {
+        return run_with_tui();
+    }
+
+    run_plain()
+}
+
+fn run_plain() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     let staged_changes = git::get_staged_changes()?;
@@ -50,6 +58,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let staged_summary = git::get_staged_summary()?;
+
+    print!("  Loading prompt configuration... ");
+    let prompt_config = prompt::load_prompt_config()?;
+    prompt::validate_context_policy(&prompt_config.context_policy)?;
+    println!("Done");
 
     let examples_count = parse_examples_count(cli.examples)?;
 
@@ -62,46 +75,31 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
     }
 
+    print!("  Checking GitHub token... ");
     let llm_client = llm::Client::new()?;
+    println!("Done");
 
     println!("  Language for commit message: {}", cli.language);
 
-    let (changes_context, truncated) = build_changes_context(
-        &staged_summary,
-        &staged_changes,
-        PRIMARY_INPUT_BUDGET_TOKENS,
-    );
-
-    if truncated {
-        println!("  Input too large; diff truncated to fit token budget.");
+    let model_chain = resolve_model_chain(&cli.model, &prompt_config.model_policy)?;
+    if cli.model == "auto" {
+        println!("  Model selection: auto -> {}", model_chain.join(", "));
+    } else {
+        println!("  Model selection: {}", model_chain.join(", "));
     }
 
-    let commit_msg = match llm_client.generate_commit_message(
-        &changes_context,
-        &cli.model,
-        &cli.language,
-        &latest_commit_messages,
-    ) {
-        Ok(message) => message,
-        Err(err) if is_payload_too_large(&err.to_string()) => {
-            println!("  Request too large; retrying with a smaller input budget.");
-            let (fallback_context, fallback_truncated) = build_changes_context(
-                &staged_summary,
-                &staged_changes,
-                FALLBACK_INPUT_BUDGET_TOKENS,
-            );
-            if fallback_truncated {
-                println!("  Diff truncated for retry.");
-            }
-            llm_client.generate_commit_message(
-                &fallback_context,
-                &cli.model,
-                &cli.language,
-                &latest_commit_messages,
-            )?
-        }
-        Err(err) => return Err(err),
+    let context = GenerationContext {
+        prompt_config: &prompt_config,
+        policy: &prompt_config.context_policy,
+        staged_summary: &staged_summary,
+        staged_changes: &staged_changes,
+        model_chain: &model_chain,
+        language: &cli.language,
+        examples: &latest_commit_messages,
     };
+    let commit_msg = generate_with_fallbacks(&llm_client, &context, |message| {
+        println!("  {message}");
+    })?;
 
     let mut commit_msg = sanitize_commit_message(&commit_msg);
     if commit_msg.is_empty() {
@@ -112,12 +110,77 @@ fn run() -> Result<(), Box<dyn Error>> {
         commit_msg.push('\n');
     }
 
-    println!("💬 Generated commit message:\n{}", commit_msg.trim_end());
+    print_commit_message(&commit_msg);
 
     println!("  Committing staged changes...");
-    git::commit_with_message(&commit_msg)?;
+    git::commit_with_message(&commit_msg, false)?;
 
     Ok(())
+}
+
+fn run_with_tui() -> Result<(), Box<dyn Error>> {
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    let cli = Cli::parse();
+
+    let mut ui = ui::Ui::start(vec![
+        "Check GitHub auth",
+        "Load prompt config",
+        "Collect staged changes",
+        "Select model",
+        "Generate commit message",
+        "Commit staged changes",
+    ])?;
+
+    let (tx, rx) = mpsc::channel::<UiEvent>();
+    let worker = thread::spawn(move || {
+        let result = run_pipeline(cli, tx.clone());
+        match result {
+            Ok(commit_msg) => {
+                let _ = tx.send(UiEvent::Completed(commit_msg));
+            }
+            Err(err) => {
+                let _ = tx.send(UiEvent::Failed(err.to_string()));
+            }
+        }
+    });
+
+    let mut finished: Option<Result<Option<String>, String>> = None;
+    while finished.is_none() {
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                UiEvent::Step { index, status } => ui.set_step_status(index, status),
+                UiEvent::Log(message) => ui.log(message),
+                UiEvent::Completed(commit_msg) => finished = Some(Ok(commit_msg)),
+                UiEvent::Failed(message) => {
+                    ui.set_error();
+                    ui.log(message.clone());
+                    finished = Some(Err(message));
+                }
+            }
+        }
+        ui.tick();
+        ui.draw()?;
+        thread::sleep(Duration::from_millis(40));
+    }
+
+    ui.shutdown()?;
+    let _ = worker.join();
+
+    match finished.unwrap_or_else(|| Err("unknown error".to_string())) {
+        Ok(Some(commit_msg)) => {
+            print_commit_message(&commit_msg);
+            println!("  Committed staged changes.");
+            Ok(())
+        }
+        Ok(None) => {
+            println!("No staged changes in the repository.");
+            Ok(())
+        }
+        Err(message) => Err(message.into()),
+    }
 }
 
 fn parse_examples_count(raw: Option<String>) -> Result<usize, Box<dyn Error>> {
@@ -136,36 +199,271 @@ fn parse_examples_count(raw: Option<String>) -> Result<usize, Box<dyn Error>> {
     Ok(count)
 }
 
-fn build_changes_context(summary: &str, diff: &str, budget_tokens: usize) -> (String, bool) {
-    let max_chars = budget_tokens.saturating_mul(TOKEN_CHAR_RATIO);
-    let summary_header = "Summary of staged changes:\n";
-    let diff_header = "\n\nStaged diff (truncated if necessary):\n";
+fn print_commit_message(commit_msg: &str) {
+    let message = commit_msg.trim_end();
+    if ui::Ui::is_tty() {
+        println!("💬 Generated commit message:");
+        println!();
+        println!("{}", message.green().bold());
+        println!();
+    } else {
+        println!("💬 Generated commit message:");
+        println!();
+        println!("{message}");
+        println!();
+    }
+}
 
+enum UiEvent {
+    Step {
+        index: usize,
+        status: ui::StepStatus,
+    },
+    Log(String),
+    Completed(Option<String>),
+    Failed(String),
+}
+
+fn run_pipeline(
+    cli: Cli,
+    tx: std::sync::mpsc::Sender<UiEvent>,
+) -> Result<Option<String>, Box<dyn Error>> {
+    let send_step = |index: usize, status: ui::StepStatus| {
+        let _ = tx.send(UiEvent::Step { index, status });
+    };
+
+    send_step(0, ui::StepStatus::Running);
+    let llm_client = llm::Client::new()?;
+    send_step(0, ui::StepStatus::Done);
+
+    send_step(1, ui::StepStatus::Running);
+    let prompt_config = prompt::load_prompt_config()?;
+    prompt::validate_context_policy(&prompt_config.context_policy)?;
+    send_step(1, ui::StepStatus::Done);
+
+    send_step(2, ui::StepStatus::Running);
+    let staged_changes = git::get_staged_changes()?;
+    if staged_changes.trim().is_empty() {
+        let _ = tx.send(UiEvent::Log(
+            "No staged changes in the repository.".to_string(),
+        ));
+        send_step(2, ui::StepStatus::Done);
+        return Ok(None);
+    }
+    let staged_summary = git::get_staged_summary()?;
+    send_step(2, ui::StepStatus::Done);
+
+    let examples_count = parse_examples_count(cli.examples)?;
+    let mut latest_commit_messages = String::new();
+    if examples_count > 0 {
+        latest_commit_messages = git::get_commit_messages(examples_count)?;
+        let _ = tx.send(UiEvent::Log(format!(
+            "Adding {} example(s) of previous commit messages to context",
+            examples_count
+        )));
+    }
+
+    let _ = tx.send(UiEvent::Log(format!(
+        "Language for commit message: {}",
+        cli.language
+    )));
+
+    send_step(3, ui::StepStatus::Running);
+    let model_chain = resolve_model_chain(&cli.model, &prompt_config.model_policy)?;
+    let model_display = if cli.model == "auto" {
+        format!("auto -> {}", model_chain.join(", "))
+    } else {
+        model_chain.join(", ")
+    };
+    let _ = tx.send(UiEvent::Log(format!("Model selection: {model_display}")));
+    send_step(3, ui::StepStatus::Done);
+
+    send_step(4, ui::StepStatus::Running);
+    let context = GenerationContext {
+        prompt_config: &prompt_config,
+        policy: &prompt_config.context_policy,
+        staged_summary: &staged_summary,
+        staged_changes: &staged_changes,
+        model_chain: &model_chain,
+        language: &cli.language,
+        examples: &latest_commit_messages,
+    };
+    let commit_msg = generate_with_fallbacks(&llm_client, &context, |message| {
+        let _ = tx.send(UiEvent::Log(message));
+    })?;
+    send_step(4, ui::StepStatus::Done);
+
+    let mut commit_msg = sanitize_commit_message(&commit_msg);
+    if commit_msg.is_empty() {
+        return Err("generated commit message is empty".into());
+    }
+    if !commit_msg.ends_with('\n') {
+        commit_msg.push('\n');
+    }
+
+    send_step(5, ui::StepStatus::Running);
+    git::commit_with_message(&commit_msg, true)?;
+    send_step(5, ui::StepStatus::Done);
+
+    Ok(Some(commit_msg))
+}
+
+struct GenerationContext<'a> {
+    prompt_config: &'a prompt::PromptConfig,
+    policy: &'a prompt::ContextPolicy,
+    staged_summary: &'a str,
+    staged_changes: &'a str,
+    model_chain: &'a [String],
+    language: &'a str,
+    examples: &'a str,
+}
+
+fn generate_with_fallbacks(
+    llm_client: &llm::Client,
+    context: &GenerationContext<'_>,
+    mut log: impl FnMut(String),
+) -> Result<String, Box<dyn Error>> {
+    let attempts = [
+        (
+            context.policy.budgets.primary_tokens,
+            ContextMode::Full,
+            "primary",
+        ),
+        (
+            context.policy.budgets.fallback_tokens,
+            ContextMode::Full,
+            "fallback",
+        ),
+        (
+            context.policy.budgets.minimal_tokens,
+            ContextMode::RequiredOnly,
+            "minimal",
+        ),
+    ];
+
+    let mut last_error: Option<String> = None;
+    for (model_index, model) in context.model_chain.iter().enumerate() {
+        for (budget_index, (budget, mode, label)) in attempts.iter().enumerate() {
+            let (changes_context, truncated) = build_changes_context(
+                context.staged_summary,
+                context.staged_changes,
+                context.policy,
+                *budget,
+                *mode,
+            );
+
+            if truncated {
+                log(format!("Input truncated under {label} context budget."));
+            }
+
+            match llm_client.generate_commit_message(
+                context.prompt_config,
+                &changes_context,
+                model,
+                context.language,
+                context.examples,
+            ) {
+                Ok(message) => return Ok(message),
+                Err(err) if is_payload_too_large(&err.to_string()) => {
+                    if let Some((_, _, next_label)) = attempts.get(budget_index + 1) {
+                        log(format!(
+                            "Request too large; retrying with {next_label} budget."
+                        ));
+                    } else if let Some(next_model) = context.model_chain.get(model_index + 1) {
+                        log(format!(
+                            "Request too large; retrying with model {next_model}."
+                        ));
+                    }
+                    last_error = Some(err.to_string());
+                    continue;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| "request failed after all retries".to_string())
+        .into())
+}
+
+fn build_changes_context(
+    summary: &str,
+    diff: &str,
+    policy: &prompt::ContextPolicy,
+    budget_tokens: usize,
+    mode: ContextMode,
+) -> (String, bool) {
+    let max_chars = budget_tokens.saturating_mul(policy.token_char_ratio);
     let mut truncated = false;
+    let mut remaining = max_chars;
+    let mut carry = 0usize;
     let mut context = String::new();
-    context.push_str(summary_header);
 
-    let remaining_for_summary = max_chars.saturating_sub(context.len());
-    let summary_trimmed = truncate_to_len(summary, remaining_for_summary);
-    if summary_trimmed.len() < summary.len() {
-        truncated = true;
+    let sections = policy
+        .sections
+        .iter()
+        .filter(|section| mode == ContextMode::Full || section.required);
+
+    for section in sections {
+        if remaining == 0 {
+            break;
+        }
+
+        let base_limit = ((max_chars as f64) * section.max_ratio).floor() as usize;
+        let mut allowed = base_limit.saturating_add(carry);
+        if allowed > remaining {
+            allowed = remaining;
+        }
+        if allowed == 0 {
+            carry = 0;
+            continue;
+        }
+
+        let header_len = section.header.len();
+        if header_len >= allowed {
+            if section.required {
+                let header_trimmed = truncate_to_len(&section.header, allowed);
+                if header_trimmed.len() < section.header.len() {
+                    truncated = true;
+                }
+                context.push_str(&header_trimmed);
+                remaining = remaining.saturating_sub(header_trimmed.len());
+            }
+            carry = 0;
+            continue;
+        }
+
+        let content_limit = allowed - header_len;
+        let source = match section.source {
+            prompt::ContextSource::Summary => summary,
+            prompt::ContextSource::Diff => diff,
+        };
+        let content_trimmed = truncate_to_len(source, content_limit);
+        if content_trimmed.len() < source.len() {
+            truncated = true;
+        }
+
+        if content_trimmed.is_empty() && !section.required {
+            carry = allowed;
+            continue;
+        }
+
+        context.push_str(&section.header);
+        context.push_str(&content_trimmed);
+
+        let used = header_len + content_trimmed.len();
+        remaining = remaining.saturating_sub(used);
+        carry = allowed.saturating_sub(used);
     }
-    context.push_str(&summary_trimmed);
-
-    let remaining_for_diff = max_chars.saturating_sub(context.len() + diff_header.len());
-    if remaining_for_diff == 0 {
-        return (context, truncated);
-    }
-
-    let diff_trimmed = truncate_to_len(diff, remaining_for_diff);
-    if diff_trimmed.len() < diff.len() {
-        truncated = true;
-    }
-
-    context.push_str(diff_header);
-    context.push_str(&diff_trimmed);
 
     (context, truncated)
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ContextMode {
+    Full,
+    RequiredOnly,
 }
 
 fn truncate_to_len(input: &str, max_len: usize) -> String {
@@ -186,6 +484,20 @@ fn is_payload_too_large(message: &str) -> bool {
     lower.contains("status 413")
         || lower.contains("payload too large")
         || lower.contains("tokens_limit_reached")
+}
+
+fn resolve_model_chain(
+    requested: &str,
+    policy: &prompt::ModelPolicy,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    if requested == "auto" {
+        if policy.auto_models.is_empty() {
+            return Err("auto model list is empty in prompt config".into());
+        }
+        return Ok(policy.auto_models.clone());
+    }
+
+    Ok(vec![requested.to_string()])
 }
 
 fn sanitize_commit_message(message: &str) -> String {
@@ -237,9 +549,32 @@ mod tests {
 
     #[test]
     fn build_changes_context_keeps_content_when_budget_allows() {
+        let policy = prompt::ContextPolicy {
+            token_char_ratio: 1,
+            budgets: prompt::ContextBudgets {
+                primary_tokens: 10,
+                fallback_tokens: 5,
+                minimal_tokens: 2,
+            },
+            sections: vec![
+                prompt::ContextSection {
+                    source: prompt::ContextSource::Summary,
+                    header: "Summary of staged changes:\n".to_string(),
+                    max_ratio: 0.5,
+                    required: true,
+                },
+                prompt::ContextSection {
+                    source: prompt::ContextSource::Diff,
+                    header: "\n\nStaged diff (truncated if necessary):\n".to_string(),
+                    max_ratio: 0.5,
+                    required: false,
+                },
+            ],
+        };
         let summary = "summary";
         let diff = "diff";
-        let (context, truncated) = build_changes_context(summary, diff, 100);
+        let (context, truncated) =
+            build_changes_context(summary, diff, &policy, 200, ContextMode::Full);
         assert!(!truncated);
         assert!(context.contains(summary));
         assert!(context.contains(diff));
@@ -247,9 +582,32 @@ mod tests {
 
     #[test]
     fn build_changes_context_marks_truncation_when_budget_is_small() {
+        let policy = prompt::ContextPolicy {
+            token_char_ratio: 1,
+            budgets: prompt::ContextBudgets {
+                primary_tokens: 10,
+                fallback_tokens: 5,
+                minimal_tokens: 2,
+            },
+            sections: vec![
+                prompt::ContextSection {
+                    source: prompt::ContextSource::Summary,
+                    header: "Summary of staged changes:\n".to_string(),
+                    max_ratio: 1.0,
+                    required: true,
+                },
+                prompt::ContextSection {
+                    source: prompt::ContextSource::Diff,
+                    header: "\n\nStaged diff (truncated if necessary):\n".to_string(),
+                    max_ratio: 0.1,
+                    required: false,
+                },
+            ],
+        };
         let summary = "summary";
         let diff = "diff";
-        let (context, truncated) = build_changes_context(summary, diff, 1);
+        let (context, truncated) =
+            build_changes_context(summary, diff, &policy, 1, ContextMode::Full);
         assert!(truncated);
         assert!(context.starts_with("Summary of staged changes:"));
     }

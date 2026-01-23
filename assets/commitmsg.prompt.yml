@@ -3,6 +3,24 @@ description: Generates professional commit messages based on git changes
 modelParameters:
   temperature: 0.2
   topP: 0.9
+modelPolicy:
+  autoModels:
+    - openai/gpt-4o-mini
+contextPolicy:
+  tokenCharRatio: 4
+  budgets:
+    primaryTokens: 12000
+    fallbackTokens: 6000
+    minimalTokens: 2000
+  sections:
+    - source: summary
+      header: "Summary of staged changes:\n"
+      maxRatio: 0.3
+      required: true
+    - source: diff
+      header: "\n\nStaged diff (truncated if necessary):\n"
+      maxRatio: 0.7
+      required: false
 messages:
   - role: system
     content: >
@@ -33,6 +51,8 @@ messages:
       - Do not use bullet points, lists, or markdown
 
       - Focus on meaningful changes; avoid trivial or redundant wording
+
+      - The input may be truncated; infer from available context and do not mention truncation
 
       Considerations (derive from the staged changes):
 
