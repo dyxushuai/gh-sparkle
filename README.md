@@ -17,13 +17,14 @@ loop tight: stage, generate, commit.
 
 `sparkle` is optimized for big diffs by combining a summary with a trimmed
 patch. It avoids API failures by capping input size and retrying with a smaller
-budget when needed. Input budgets are defined in code and can be tuned in
-`src/main.rs`.
+budget when needed. Input budgets and model policy are defined in
+`assets/commitmsg.prompt.yml`.
 
 ## Features
 
 - Copilot-style commit message generation from staged diffs
-- Defaults to `openai/gpt-4o-mini` with safe input trimming for large changes
+- Defaults to `auto` with safe input trimming for large changes
+- Animated TUI progress experience in interactive terminals
 - Supports `--language`, `--examples`, and `--model`
 - Commits staged changes automatically
 
@@ -60,7 +61,8 @@ gh sparkle
 - `-e, --examples[=<N>]`: Include recent commit messages as examples.
   If provided without a value, it uses `3`. Valid range: `1..=20`.
 - `-m, --model <MODEL>`: GitHub Models model to use.
-  Default: `openai/gpt-4o-mini`.
+  Default: `auto` (resolved via `modelPolicy.autoModels` in the prompt config,
+  tried in order until a request succeeds).
 
 ```bash
 # Generate commit message in a different language
