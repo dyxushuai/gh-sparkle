@@ -8,6 +8,7 @@ mod ui;
 use clap::Parser;
 use crossterm::style::Stylize;
 use std::error::Error;
+use std::time::{Duration, Instant};
 
 const EXTENSION_NAME: &str = "sparkle";
 const DEFAULT_MODEL: &str = "auto";
@@ -49,8 +50,10 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_plain() -> Result<(), Box<dyn Error>> {
+    let mut profile = Profile::new();
     let cli = Cli::parse();
 
+    profile.mark("parse args");
     let staged_changes = git::get_staged_changes()?;
     if staged_changes.trim().is_empty() {
         println!("No staged changes in the repository.");
@@ -63,6 +66,7 @@ fn run_plain() -> Result<(), Box<dyn Error>> {
     let prompt_config = prompt::load_prompt_config()?;
     prompt::validate_context_policy(&prompt_config.context_policy)?;
     println!("Done");
+    profile.mark("load prompt config");
 
     let examples_count = parse_examples_count(cli.examples)?;
 
@@ -78,6 +82,7 @@ fn run_plain() -> Result<(), Box<dyn Error>> {
     print!("  Checking GitHub token... ");
     let llm_client = llm::Client::new()?;
     println!("Done");
+    profile.mark("init client");
 
     println!("  Language for commit message: {}", cli.language);
 
@@ -100,6 +105,7 @@ fn run_plain() -> Result<(), Box<dyn Error>> {
     let commit_msg = generate_with_fallbacks(&llm_client, &context, |message| {
         println!("  {message}");
     })?;
+    profile.mark("generate message");
 
     let mut commit_msg = sanitize_commit_message(&commit_msg);
     if commit_msg.is_empty() {
@@ -114,14 +120,15 @@ fn run_plain() -> Result<(), Box<dyn Error>> {
 
     println!("  Committing staged changes...");
     git::commit_with_message(&commit_msg, false)?;
+    profile.mark("commit");
 
+    profile.print_if_enabled();
     Ok(())
 }
 
 fn run_with_tui() -> Result<(), Box<dyn Error>> {
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
 
     let cli = Cli::parse();
 
@@ -138,8 +145,8 @@ fn run_with_tui() -> Result<(), Box<dyn Error>> {
     let worker = thread::spawn(move || {
         let result = run_pipeline(cli, tx.clone());
         match result {
-            Ok(commit_msg) => {
-                let _ = tx.send(UiEvent::Completed(commit_msg));
+            Ok((commit_msg, profile)) => {
+                let _ = tx.send(UiEvent::Completed(commit_msg, profile));
             }
             Err(err) => {
                 let _ = tx.send(UiEvent::Failed(err.to_string()));
@@ -147,13 +154,15 @@ fn run_with_tui() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let mut finished: Option<Result<Option<String>, String>> = None;
+    let mut finished: Option<Result<(Option<String>, Profile), String>> = None;
     while finished.is_none() {
         while let Ok(event) = rx.try_recv() {
             match event {
                 UiEvent::Step { index, status } => ui.set_step_status(index, status),
                 UiEvent::Log(message) => ui.log(message),
-                UiEvent::Completed(commit_msg) => finished = Some(Ok(commit_msg)),
+                UiEvent::Completed(commit_msg, profile) => {
+                    finished = Some(Ok((commit_msg, profile)))
+                }
                 UiEvent::Failed(message) => {
                     ui.set_error();
                     ui.log(message.clone());
@@ -170,13 +179,15 @@ fn run_with_tui() -> Result<(), Box<dyn Error>> {
     let _ = worker.join();
 
     match finished.unwrap_or_else(|| Err("unknown error".to_string())) {
-        Ok(Some(commit_msg)) => {
+        Ok((Some(commit_msg), profile)) => {
             print_commit_message(&commit_msg);
             println!("  Committed staged changes.");
+            profile.print_if_enabled();
             Ok(())
         }
-        Ok(None) => {
+        Ok((None, profile)) => {
             println!("No staged changes in the repository.");
+            profile.print_if_enabled();
             Ok(())
         }
         Err(message) => Err(message.into()),
@@ -214,20 +225,59 @@ fn print_commit_message(commit_msg: &str) {
     }
 }
 
+struct Profile {
+    enabled: bool,
+    last: Instant,
+    samples: Vec<(&'static str, Duration)>,
+}
+
+impl Profile {
+    fn new() -> Self {
+        let enabled = std::env::var("SPARKLE_PROFILE").is_ok();
+        Self {
+            enabled,
+            last: Instant::now(),
+            samples: Vec::new(),
+        }
+    }
+
+    fn mark(&mut self, label: &'static str) {
+        if !self.enabled {
+            return;
+        }
+        let now = Instant::now();
+        let duration = now.duration_since(self.last);
+        self.samples.push((label, duration));
+        self.last = now;
+    }
+
+    fn print_if_enabled(&self) {
+        if !self.enabled {
+            return;
+        }
+        println!();
+        println!("Profile (SPARKLE_PROFILE=1):");
+        for (label, duration) in &self.samples {
+            println!("  {label}: {:.2?}", duration);
+        }
+    }
+}
+
 enum UiEvent {
     Step {
         index: usize,
         status: ui::StepStatus,
     },
     Log(String),
-    Completed(Option<String>),
+    Completed(Option<String>, Profile),
     Failed(String),
 }
 
 fn run_pipeline(
     cli: Cli,
     tx: std::sync::mpsc::Sender<UiEvent>,
-) -> Result<Option<String>, Box<dyn Error>> {
+) -> Result<(Option<String>, Profile), Box<dyn Error>> {
+    let mut profile = Profile::new();
     let send_step = |index: usize, status: ui::StepStatus| {
         let _ = tx.send(UiEvent::Step { index, status });
     };
@@ -235,11 +285,13 @@ fn run_pipeline(
     send_step(0, ui::StepStatus::Running);
     let llm_client = llm::Client::new()?;
     send_step(0, ui::StepStatus::Done);
+    profile.mark("init client");
 
     send_step(1, ui::StepStatus::Running);
     let prompt_config = prompt::load_prompt_config()?;
     prompt::validate_context_policy(&prompt_config.context_policy)?;
     send_step(1, ui::StepStatus::Done);
+    profile.mark("load prompt config");
 
     send_step(2, ui::StepStatus::Running);
     let staged_changes = git::get_staged_changes()?;
@@ -248,10 +300,12 @@ fn run_pipeline(
             "No staged changes in the repository.".to_string(),
         ));
         send_step(2, ui::StepStatus::Done);
-        return Ok(None);
+        profile.mark("collect changes");
+        return Ok((None, profile));
     }
     let staged_summary = git::get_staged_summary()?;
     send_step(2, ui::StepStatus::Done);
+    profile.mark("collect changes");
 
     let examples_count = parse_examples_count(cli.examples)?;
     let mut latest_commit_messages = String::new();
@@ -292,6 +346,7 @@ fn run_pipeline(
         let _ = tx.send(UiEvent::Log(message));
     })?;
     send_step(4, ui::StepStatus::Done);
+    profile.mark("generate message");
 
     let mut commit_msg = sanitize_commit_message(&commit_msg);
     if commit_msg.is_empty() {
@@ -304,8 +359,9 @@ fn run_pipeline(
     send_step(5, ui::StepStatus::Running);
     git::commit_with_message(&commit_msg, true)?;
     send_step(5, ui::StepStatus::Done);
+    profile.mark("commit");
 
-    Ok(Some(commit_msg))
+    Ok((Some(commit_msg), profile))
 }
 
 struct GenerationContext<'a> {
