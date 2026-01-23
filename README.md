@@ -8,25 +8,16 @@ A GitHub CLI extension that brings VS Code's "Generate Commit Message" flow to
 your terminal. It reads staged changes, asks GitHub Models for a Conventional
 Commit message, and commits it automatically.
 
-For large diffs, it summarizes, trims, and retries to stay within model limits.
-
 ## Why sparkle
 
 The name comes from the ✨/sparkle icon in VS Code's "Generate Commit Message"
-action. I wanted the same flow inside `gh`: stage, generate, commit.
-
-## Large changes handling
-
-`sparkle` handles big diffs by combining a summary with a trimmed patch. It caps
-input size and retries with a smaller budget when needed. Input budgets and
-model policy are defined in
-`assets/commitmsg.prompt.yml`.
+action. I wanted the same flow inside `gh`: stage, generate, commit. 
 
 ## Features
 
 - Copilot-style commit message generation from staged diffs
+- Handles large changes with summary + trimming
 - Defaults to `auto` with safe input trimming for large changes
-- Lightweight inline animation in interactive terminals
 - Supports `--language`, `--examples`, and `--model`
 - Commits staged changes automatically
 
@@ -91,3 +82,11 @@ gh auth login --hostname <your-host>
 ```bash
 gh extension upgrade sparkle
 ```
+
+## Large changes handling
+
+For big diffs, it summarizes and trims input, then retries with a smaller budget when
+needed. Input budgets and model policy are defined in
+`assets/commitmsg.prompt.yml`.
+
+
