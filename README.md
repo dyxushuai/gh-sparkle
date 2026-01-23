@@ -1,4 +1,4 @@
-![CLI output sample](assets/cli-output.svg)
+<img src="assets/cli-output.svg" alt="CLI output sample" height="240">
 
 # $gh <✨/sparkle>
 
