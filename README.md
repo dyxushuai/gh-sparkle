@@ -1,15 +1,14 @@
+![CLI output sample](assets/cli-output.svg)
+
 # $gh <✨/sparkle>
+
+[![CI](https://github.com/dyxushuai/gh-sparkle/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dyxushuai/gh-sparkle/actions/workflows/ci.yml)
 
 A GitHub CLI extension that brings the VS Code "Generate Commit Message"
 experience to your terminal. It reads staged changes, asks GitHub Models for a
 Conventional Commit message, then commits automatically.
-
 Built for large diffs: it summarizes, trims, and retries to stay within model
 limits without breaking the flow.
-
-## CLI Output (Sample)
-
-![CLI output sample](assets/cli-output.svg)
 
 ## Why sparkle
 
