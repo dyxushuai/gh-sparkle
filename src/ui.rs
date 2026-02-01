@@ -22,6 +22,7 @@ pub struct Ui {
     spinner_index: usize,
     last_tick: Instant,
     last_log: Option<String>,
+    shutdown: bool,
 }
 
 impl Ui {
@@ -29,13 +30,14 @@ impl Ui {
         io::stdout().is_terminal()
     }
 
-    pub fn start(step_labels: Vec<&str>) -> Result<Self, Box<dyn Error>> {
+    pub fn start(step_labels: &[&str]) -> Result<Self, Box<dyn Error>> {
         let mut stdout = io::stdout();
         stdout.execute(Hide)?;
         let label = step_labels
             .first()
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "Starting".to_string());
+            .copied()
+            .unwrap_or("Starting")
+            .to_string();
 
         Ok(Self {
             steps_total: step_labels.len().max(1),
@@ -44,14 +46,20 @@ impl Ui {
             spinner_index: 0,
             last_tick: Instant::now(),
             last_log: None,
+            shutdown: false,
         })
     }
 
-    pub fn shutdown(mut self) -> Result<(), Box<dyn Error>> {
-        self.clear_line()?;
+    pub fn shutdown(&mut self) -> Result<(), Box<dyn Error>> {
+        if self.shutdown {
+            return Ok(());
+        }
+
+        Self::clear_line()?;
         let mut stdout = io::stdout();
         stdout.execute(Show)?;
         stdout.flush()?;
+        self.shutdown = true;
         Ok(())
     }
 
@@ -96,11 +104,11 @@ impl Ui {
             format!("{spinner} {label} — {log}", label = self.current_label)
         };
 
-        self.render_line(&message)?;
+        Self::render_line(&message)?;
         Ok(())
     }
 
-    fn render_line(&mut self, message: &str) -> Result<(), Box<dyn Error>> {
+    fn render_line(message: &str) -> Result<(), Box<dyn Error>> {
         let mut stdout = io::stdout();
         stdout.execute(MoveToColumn(0))?;
         stdout.execute(Clear(ClearType::CurrentLine))?;
@@ -109,7 +117,7 @@ impl Ui {
         Ok(())
     }
 
-    fn clear_line(&mut self) -> Result<(), Box<dyn Error>> {
+    fn clear_line() -> Result<(), Box<dyn Error>> {
         let mut stdout = io::stdout();
         stdout.execute(MoveToColumn(0))?;
         stdout.execute(Clear(ClearType::CurrentLine))?;
@@ -120,7 +128,11 @@ impl Ui {
 
 impl Drop for Ui {
     fn drop(&mut self) {
-        let _ = self.clear_line();
+        if self.shutdown {
+            return;
+        }
+
+        let _ = Self::clear_line();
         let mut stdout = io::stdout();
         let _ = stdout.execute(Show);
         let _ = stdout.flush();

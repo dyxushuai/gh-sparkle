@@ -56,6 +56,7 @@ pub struct ContextPolicy {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_field_names)]
 pub struct ContextBudgets {
     pub primary_tokens: usize,
     pub fallback_tokens: usize,

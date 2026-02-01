@@ -34,6 +34,12 @@ struct Cli {
     model: String,
 }
 
+/// Entry point for the `gh sparkle` extension.
+///
+/// # Errors
+///
+/// Returns an error if reading git state, loading prompt configuration, calling GitHub Models, or
+/// committing staged changes fails.
 pub fn run() -> Result<(), Box<dyn Error>> {
     if ui::Ui::is_tty() {
         return run_with_tui();
@@ -66,10 +72,7 @@ fn run_plain() -> Result<(), Box<dyn Error>> {
     let mut latest_commit_messages = String::new();
     if examples_count > 0 {
         latest_commit_messages = git::get_commit_messages(examples_count)?;
-        println!(
-            "  Adding {} example(s) of previous commit messages to context",
-            examples_count
-        );
+        println!("  Adding {examples_count} example(s) of previous commit messages to context");
     }
 
     print!("  Checking GitHub token... ");
@@ -125,7 +128,7 @@ fn run_with_tui() -> Result<(), Box<dyn Error>> {
 
     let cli = Cli::parse();
 
-    let mut ui = ui::Ui::start(vec![
+    let mut ui = ui::Ui::start(&[
         "Check GitHub auth",
         "Load prompt config",
         "Collect staged changes",
@@ -136,7 +139,7 @@ fn run_with_tui() -> Result<(), Box<dyn Error>> {
 
     let (tx, rx) = mpsc::channel::<UiEvent>();
     let worker = thread::spawn(move || {
-        let result = run_pipeline(cli, tx.clone());
+        let result = run_pipeline(cli, &tx);
         match result {
             Ok((commit_msg, profile)) => {
                 let _ = tx.send(UiEvent::Completed(commit_msg, profile));
@@ -154,7 +157,7 @@ fn run_with_tui() -> Result<(), Box<dyn Error>> {
                 UiEvent::Step { index, status } => ui.set_step_status(index, status),
                 UiEvent::Log(message) => ui.log(message),
                 UiEvent::Completed(commit_msg, profile) => {
-                    finished = Some(Ok((commit_msg, profile)))
+                    finished = Some(Ok((commit_msg, profile)));
                 }
                 UiEvent::Failed(message) => {
                     ui.set_error();
@@ -251,7 +254,7 @@ impl Profile {
         println!();
         println!("Profile (SPARKLE_PROFILE=1):");
         for (label, duration) in &self.samples {
-            println!("  {label}: {:.2?}", duration);
+            println!("  {label}: {duration:.2?}");
         }
     }
 }
@@ -268,7 +271,7 @@ enum UiEvent {
 
 fn run_pipeline(
     cli: Cli,
-    tx: std::sync::mpsc::Sender<UiEvent>,
+    tx: &std::sync::mpsc::Sender<UiEvent>,
 ) -> Result<(Option<String>, Profile), Box<dyn Error>> {
     let mut profile = Profile::new();
     let send_step = |index: usize, status: ui::StepStatus| {
@@ -305,8 +308,7 @@ fn run_pipeline(
     if examples_count > 0 {
         latest_commit_messages = git::get_commit_messages(examples_count)?;
         let _ = tx.send(UiEvent::Log(format!(
-            "Adding {} example(s) of previous commit messages to context",
-            examples_count
+            "Adding {examples_count} example(s) of previous commit messages to context"
         )));
     }
 
@@ -424,7 +426,6 @@ fn generate_with_fallbacks(
                         ));
                     }
                     last_error = Some(err.to_string());
-                    continue;
                 }
                 Err(err) => return Err(err),
             }
@@ -459,7 +460,9 @@ fn build_changes_context(
             break;
         }
 
-        let base_limit = ((max_chars as f64) * section.max_ratio).floor() as usize;
+        let max_chars_u32 = u32::try_from(max_chars).unwrap_or(u32::MAX);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let base_limit = (f64::from(max_chars_u32) * section.max_ratio).floor() as usize;
         let mut allowed = base_limit.saturating_add(carry);
         if allowed > remaining {
             allowed = remaining;

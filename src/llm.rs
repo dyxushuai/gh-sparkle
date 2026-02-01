@@ -101,7 +101,7 @@ impl Client {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().unwrap_or_default();
-            return Err(format!("API request failed with status {}: {}", status, body).into());
+            return Err(format!("API request failed with status {status}: {body}").into());
         }
 
         Ok(response.json::<Response>()?)
@@ -173,7 +173,6 @@ fn create_examples_string(examples: &str) -> String {
     }
 
     format!(
-        "Here are some examples of good commit messages used previously in project:\n{}",
-        examples
+        "Here are some examples of good commit messages used previously in project:\n{examples}"
     )
 }

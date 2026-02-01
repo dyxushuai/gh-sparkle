@@ -86,7 +86,7 @@ pub fn commit_with_message(message: &str, quiet: bool) -> Result<(), Box<dyn Err
 
     let status = child.wait()?;
     if !status.success() {
-        return Err(format!("git commit failed with status {}", status).into());
+        return Err(format!("git commit failed with status {status}").into());
     }
 
     Ok(())
@@ -98,6 +98,5 @@ fn is_git_repository() -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .is_ok_and(|status| status.success())
 }
