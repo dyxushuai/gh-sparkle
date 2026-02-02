@@ -63,7 +63,12 @@ gh sparkle --model xai/grok-3-mini
 ## Prerequisites
 
 - GitHub CLI installed and authenticated (`gh auth login`)
+- A GitHub token that can access GitHub Models (`models: read` on a fine-grained PAT, or `models`
+  scope on a classic PAT)
 - A git repository with staged changes
+
+Sparkle reads tokens from `GH_TOKEN`, `GITHUB_TOKEN`, `GITHUB_OAUTH_TOKEN`, or `gh auth token`.
+If you see HTTP 401/403 errors from GitHub Models, make sure the token has GitHub Models access.
 
 If you use GitHub Enterprise, make sure your host is authenticated:
 
@@ -88,5 +93,3 @@ gh extension upgrade sparkle
 For big diffs, it summarizes and trims input, then retries with a smaller budget when
 needed. Input budgets and model policy are defined in
 `assets/commitmsg.prompt.yml`.
-
-

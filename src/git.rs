@@ -46,7 +46,13 @@ pub fn get_commit_messages(count: usize) -> Result<String, Box<dyn Error>> {
     }
 
     let output = Command::new("git")
-        .args(["log", "-n", &count.to_string()])
+        .args([
+            "log",
+            "-n",
+            &count.to_string(),
+            "--no-merges",
+            "--format=%s",
+        ])
         .output()?;
 
     if !output.status.success() {
