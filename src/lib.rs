@@ -415,6 +415,7 @@ fn generate_with_fallbacks(
         ),
     ];
 
+    let mut logged_truncation_budgets = std::collections::HashSet::new();
     let mut last_error: Option<String> = None;
     for (model_index, model) in context.model_chain.iter().enumerate() {
         for (budget_index, (budget, mode, label)) in attempts.iter().enumerate() {
@@ -426,7 +427,7 @@ fn generate_with_fallbacks(
                 *mode,
             );
 
-            if truncated {
+            if truncated && logged_truncation_budgets.insert(*label) {
                 log(format!("Input truncated under {label} context budget."));
             }
 

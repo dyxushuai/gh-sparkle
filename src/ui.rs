@@ -22,7 +22,7 @@ pub struct Ui {
     current_label: String,
     spinner_index: usize,
     last_tick: Instant,
-    last_log: Option<String>,
+    pending_log: Option<String>,
     shutdown: bool,
 }
 
@@ -53,7 +53,7 @@ impl Ui {
             current_label: label,
             spinner_index: 0,
             last_tick: Instant::now(),
-            last_log: None,
+            pending_log: None,
             shutdown: false,
         })
     }
@@ -99,7 +99,10 @@ impl Ui {
         if message.is_empty() {
             return;
         }
-        self.last_log = Some(message);
+        if self.pending_log.as_deref() == Some(message.as_str()) {
+            return;
+        }
+        self.pending_log = Some(message);
     }
 
     pub fn tick(&mut self) {
@@ -110,13 +113,12 @@ impl Ui {
     }
 
     pub fn draw(&mut self) -> Result<(), Box<dyn Error>> {
+        if let Some(log) = self.pending_log.take() {
+            Self::render_log_line(&log)?;
+        }
+
         let spinner = SPINNER_FRAMES[self.spinner_index];
-        let log = self.last_log.as_deref().unwrap_or("");
-        let message = if log.is_empty() {
-            format!("{spinner} {label}", label = self.current_label)
-        } else {
-            format!("{spinner} {label} — {log}", label = self.current_label)
-        };
+        let message = format!("{spinner} {label}", label = self.current_label);
 
         Self::render_line(&message)?;
         Ok(())
@@ -127,6 +129,15 @@ impl Ui {
         stdout.execute(MoveToColumn(0))?;
         stdout.execute(Clear(ClearType::CurrentLine))?;
         write!(stdout, "{message}")?;
+        stdout.flush()?;
+        Ok(())
+    }
+
+    fn render_log_line(message: &str) -> Result<(), Box<dyn Error>> {
+        let mut stdout = io::stdout();
+        stdout.execute(MoveToColumn(0))?;
+        stdout.execute(Clear(ClearType::CurrentLine))?;
+        writeln!(stdout, "ℹ {message}")?;
         stdout.flush()?;
         Ok(())
     }
