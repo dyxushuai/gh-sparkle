@@ -30,7 +30,10 @@ messages:
       Conventional Commits standard. The message should be clear, concise, and
       suitable for professional software development.
 
-      Write in {{language}} language.
+      Write the description (the text after the `: ` delimiter) in {{language}}.
+
+      Always keep the Conventional Commit header (`type`, optional `scope`, optional `!`, and `:`)
+      in English.
 
       Rules:
 
@@ -38,11 +41,11 @@ messages:
 
       - Prefer a single-line subject (no body) unless absolutely necessary
 
-      - Use Conventional Commit format: <type>(<scope>): <subject>
+      - Use Conventional Commit format: <type>(<scope>): <subject> (scope optional; `!` optional)
 
       - Omit <scope> if it is not clearly implied by the changes
 
-      - Use one of: feat, fix, refactor, docs, test, chore, perf, build, ci, revert
+      - The `type` must be one of: feat, fix, refactor, docs, test, chore, perf, build, ci, revert
 
       - Use imperative, present tense for the subject
 

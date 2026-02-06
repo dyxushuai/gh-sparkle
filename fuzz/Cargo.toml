@@ -1,0 +1,26 @@
+[package]
+name = "gh-sparkle-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+gh-sparkle = { path = "..", features = ["fuzzing"] }
+
+[[bin]]
+name = "commit_message"
+path = "fuzz_targets/commit_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "context_policy"
+path = "fuzz_targets/context_policy.rs"
+test = false
+doc = false
+bench = false

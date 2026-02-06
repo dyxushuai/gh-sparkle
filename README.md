@@ -38,17 +38,26 @@ gh sparkle
 
 ### Options
 
-- `-l, --language <LANGUAGE>`: Output language for the commit message.
+- `-l, --language <LANGUAGE>`: Output language for the description text (after `: `).
+  The Conventional Commit header (`type`, optional `scope`, optional `!`) remains in English.
   Default: `english`.
 - `-e, --examples[=<N>]`: Include recent commit messages as examples.
   If provided without a value, it uses `3`. Valid range: `1..=20`.
 - `-m, --model <MODEL>`: GitHub Models model to use.
   Default: `auto` (resolved via `modelPolicy.autoModels` in the prompt config,
   tried in order until a request succeeds).
+- `--dry-run` (alias `--no-commit`): Print the generated commit message but do not commit.
+- `--summary-only` (alias `--no-diff`): Use only the staged summary as model context.
 
 ```bash
 # Generate commit message in a different language
 gh sparkle --language chinese
+
+# Preview without committing
+gh sparkle --dry-run
+
+# Avoid sending staged diffs (summary only)
+gh sparkle --summary-only
 
 # Add previous commit messages as examples (default 3 when flag is present)
 gh sparkle --examples
@@ -76,6 +85,12 @@ If you use GitHub Enterprise, make sure your host is authenticated:
 gh auth login --hostname <your-host>
 ```
 
+## Security & privacy
+
+- Sparkle sends your staged summary and (by default) staged diff to GitHub Models to generate a
+  commit message. If you provide `--examples`, it also sends recent commit subjects as examples.
+- Do not stage secrets. Prefer `--summary-only` when working with sensitive code.
+
 ## Notes
 
 - The extension commits automatically using the generated message.
@@ -87,6 +102,21 @@ gh auth login --hostname <your-host>
 ```bash
 gh extension upgrade sparkle
 ```
+
+## Fuzzing
+
+To run fuzz targets locally:
+
+```bash
+cargo install cargo-fuzz
+target=$(rustc -vV | awk '/^host:/ {print $2}')
+cargo fuzz run commit_message --target "$target"
+cargo fuzz run context_policy --target "$target"
+```
+
+Note: on Linux, `cargo-fuzz` defaults to the `x86_64-unknown-linux-musl` target, which is not
+compatible with AddressSanitizer. Using your host target (typically `x86_64-unknown-linux-gnu`)
+avoids this.
 
 ## Large changes handling
 

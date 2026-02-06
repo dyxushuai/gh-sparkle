@@ -1,5 +1,6 @@
 // CLI entrypoint for gh-sparkle.
 
+mod commit_message;
 mod git;
 mod llm;
 mod prompt;
@@ -17,11 +18,12 @@ const MAX_EXAMPLES: usize = 20;
 #[derive(Parser)]
 #[command(
     name = EXTENSION_NAME,
+    version,
     about = "Generate AI-powered commit messages",
     long_about = "A GitHub CLI extension that generates commit messages using GitHub Models and staged git changes"
 )]
 struct Cli {
-    /// Language to generate commit message in
+    /// Language for the commit description text (after `: `)
     #[arg(short = 'l', long = "language", default_value = "english")]
     language: String,
 
@@ -32,6 +34,14 @@ struct Cli {
     /// GitHub Models model to use
     #[arg(short = 'm', long = "model", default_value = DEFAULT_MODEL)]
     model: String,
+
+    /// Print the generated commit message but do not commit staged changes (alias: --no-commit)
+    #[arg(long = "dry-run", alias = "no-commit")]
+    dry_run: bool,
+
+    /// Use only the staged summary as model context (do not include staged diff) (alias: --no-diff)
+    #[arg(long = "summary-only", alias = "no-diff")]
+    summary_only: bool,
 }
 
 /// Entry point for the `gh sparkle` extension.
@@ -41,25 +51,29 @@ struct Cli {
 /// Returns an error if reading git state, loading prompt configuration, calling GitHub Models, or
 /// committing staged changes fails.
 pub fn run() -> Result<(), Box<dyn Error>> {
+    let cli = Cli::parse();
     if ui::Ui::is_tty() {
-        return run_with_tui();
+        return run_with_tui(cli);
     }
 
-    run_plain()
+    run_plain(cli)
 }
 
-fn run_plain() -> Result<(), Box<dyn Error>> {
+fn run_plain(cli: Cli) -> Result<(), Box<dyn Error>> {
     let mut profile = Profile::new();
-    let cli = Cli::parse();
 
     profile.mark("parse args");
-    let staged_changes = git::get_staged_changes()?;
-    if staged_changes.trim().is_empty() {
+    let staged_summary = git::get_staged_summary()?;
+    if staged_summary.trim().is_empty() {
         println!("No staged changes in the repository.");
         return Ok(());
     }
 
-    let staged_summary = git::get_staged_summary()?;
+    let staged_changes = if cli.summary_only {
+        String::new()
+    } else {
+        git::get_staged_changes()?
+    };
 
     print!("  Loading prompt configuration... ");
     let prompt_config = prompt::load_prompt_config()?;
@@ -103,31 +117,29 @@ fn run_plain() -> Result<(), Box<dyn Error>> {
     })?;
     profile.mark("generate message");
 
-    let mut commit_msg = sanitize_commit_message(&commit_msg);
-    if commit_msg.is_empty() {
-        return Err("generated commit message is empty".into());
+    let normalized = commit_message::normalize_commit_message(&commit_msg)?;
+    for warning in &normalized.warnings {
+        println!("  Warning: {warning}");
     }
+    print_commit_message(&normalized.message);
 
-    if !commit_msg.ends_with('\n') {
-        commit_msg.push('\n');
+    if cli.dry_run {
+        println!("  Dry run enabled; not committing staged changes.");
+    } else {
+        println!("  Committing staged changes...");
+        git::commit_with_message(&normalized.message, false)?;
+        profile.mark("commit");
     }
-
-    print_commit_message(&commit_msg);
-
-    println!("  Committing staged changes...");
-    git::commit_with_message(&commit_msg, false)?;
-    profile.mark("commit");
 
     profile.print_if_enabled();
     Ok(())
 }
 
-fn run_with_tui() -> Result<(), Box<dyn Error>> {
+fn run_with_tui(cli: Cli) -> Result<(), Box<dyn Error>> {
     use std::sync::mpsc;
     use std::thread;
 
-    let cli = Cli::parse();
-
+    let dry_run = cli.dry_run;
     let mut ui = ui::Ui::start(&[
         "Check GitHub auth",
         "Load prompt config",
@@ -177,7 +189,11 @@ fn run_with_tui() -> Result<(), Box<dyn Error>> {
     match finished.unwrap_or_else(|| Err("unknown error".to_string())) {
         Ok((Some(commit_msg), profile)) => {
             print_commit_message(&commit_msg);
-            println!("  Committed staged changes.");
+            if dry_run {
+                println!("  Dry run enabled; not committing staged changes.");
+            } else {
+                println!("  Committed staged changes.");
+            }
             profile.print_if_enabled();
             Ok(())
         }
@@ -290,8 +306,8 @@ fn run_pipeline(
     profile.mark("load prompt config");
 
     send_step(2, ui::StepStatus::Running);
-    let staged_changes = git::get_staged_changes()?;
-    if staged_changes.trim().is_empty() {
+    let staged_summary = git::get_staged_summary()?;
+    if staged_summary.trim().is_empty() {
         let _ = tx.send(UiEvent::Log(
             "No staged changes in the repository.".to_string(),
         ));
@@ -299,7 +315,11 @@ fn run_pipeline(
         profile.mark("collect changes");
         return Ok((None, profile));
     }
-    let staged_summary = git::get_staged_summary()?;
+    let staged_changes = if cli.summary_only {
+        String::new()
+    } else {
+        git::get_staged_changes()?
+    };
     send_step(2, ui::StepStatus::Done);
     profile.mark("collect changes");
 
@@ -343,20 +363,23 @@ fn run_pipeline(
     send_step(4, ui::StepStatus::Done);
     profile.mark("generate message");
 
-    let mut commit_msg = sanitize_commit_message(&commit_msg);
-    if commit_msg.is_empty() {
-        return Err("generated commit message is empty".into());
-    }
-    if !commit_msg.ends_with('\n') {
-        commit_msg.push('\n');
+    let normalized = commit_message::normalize_commit_message(&commit_msg)?;
+    for warning in &normalized.warnings {
+        let _ = tx.send(UiEvent::Log(format!("Warning: {warning}")));
     }
 
     send_step(5, ui::StepStatus::Running);
-    git::commit_with_message(&commit_msg, true)?;
+    if cli.dry_run {
+        let _ = tx.send(UiEvent::Log(
+            "Dry run enabled; not committing staged changes.".to_string(),
+        ));
+    } else {
+        git::commit_with_message(&normalized.message, true)?;
+        profile.mark("commit");
+    }
     send_step(5, ui::StepStatus::Done);
-    profile.mark("commit");
 
-    Ok((Some(commit_msg), profile))
+    Ok((Some(normalized.message), profile))
 }
 
 struct GenerationContext<'a> {
@@ -538,6 +561,18 @@ fn is_payload_too_large(message: &str) -> bool {
         || lower.contains("tokens_limit_reached")
 }
 
+#[cfg(feature = "fuzzing")]
+pub fn fuzz_normalize_commit_message(input: &str) {
+    let _ = commit_message::normalize_commit_message(input);
+}
+
+#[cfg(feature = "fuzzing")]
+pub fn fuzz_parse_and_validate_context_policy(input: &str) {
+    if let Ok(policy) = serde_yaml::from_str::<prompt::ContextPolicy>(input) {
+        let _ = prompt::validate_context_policy(&policy);
+    }
+}
+
 fn resolve_model_chain(
     requested: &str,
     policy: &prompt::ModelPolicy,
@@ -552,39 +587,25 @@ fn resolve_model_chain(
     Ok(vec![requested.to_string()])
 }
 
-fn sanitize_commit_message(message: &str) -> String {
-    let mut lines = Vec::new();
-    for line in message.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") {
-            let rest = trimmed.trim_start_matches("```").trim_start();
-            if !rest.is_empty() && !is_fence_language(rest) {
-                lines.push(rest);
-            }
-            continue;
-        }
-        lines.push(line);
-    }
-
-    let mut sanitized = lines.join("\n").trim().to_string();
-    if sanitized.starts_with("```") {
-        sanitized = sanitized.trim_start_matches("```").trim_start().to_string();
-    }
-    if sanitized.ends_with("```") {
-        sanitized = sanitized.trim_end_matches("```").trim_end().to_string();
-    }
-
-    sanitized
-}
-
-fn is_fence_language(tag: &str) -> bool {
-    tag.chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_parses_alias_flags() {
+        let cli = Cli::try_parse_from(["gh-sparkle", "--no-commit", "--no-diff"]).unwrap();
+        assert!(cli.dry_run);
+        assert!(cli.summary_only);
+    }
+
+    #[test]
+    fn cli_uses_expected_defaults() {
+        let cli = Cli::try_parse_from(["gh-sparkle"]).unwrap();
+        assert_eq!(cli.language, "english");
+        assert_eq!(cli.model, DEFAULT_MODEL);
+        assert!(!cli.dry_run);
+        assert!(!cli.summary_only);
+    }
 
     #[test]
     fn parse_examples_count_accepts_valid_values() {
@@ -662,18 +683,6 @@ mod tests {
             build_changes_context(summary, diff, &policy, 1, ContextMode::Full);
         assert!(truncated);
         assert!(!context.is_empty());
-    }
-
-    #[test]
-    fn sanitize_commit_message_removes_code_fences() {
-        let input = "```\nfeat: add tests\n```\n";
-        assert_eq!(sanitize_commit_message(input), "feat: add tests");
-    }
-
-    #[test]
-    fn sanitize_commit_message_preserves_inline_message_after_fence() {
-        let input = "```feat: add tests\n";
-        assert_eq!(sanitize_commit_message(input), "feat: add tests");
     }
 
     #[test]

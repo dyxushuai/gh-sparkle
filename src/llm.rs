@@ -338,16 +338,37 @@ fn create_examples_string(examples: &str) -> String {
     }
 
     let mut lines = Vec::new();
+    let mut example_index = 0usize;
     for line in examples.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        lines.push(format!("- {trimmed}"));
+        example_index += 1;
+        lines.push(format!("Example {example_index}: {trimmed}"));
     }
 
     format!(
-        "Here are some examples of good commit messages used previously in project:\n{}",
+        "Here are some examples of good commit messages used previously in this project:\n{}",
         lines.join("\n")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_examples_string_numbers_non_empty_lines() {
+        let input = "feat: add foo\n\nfix: handle bar\n";
+        let rendered = create_examples_string(input);
+        assert!(rendered.contains("Example 1: feat: add foo"));
+        assert!(rendered.contains("Example 2: fix: handle bar"));
+    }
+
+    #[test]
+    fn create_examples_string_is_not_a_markdown_list() {
+        let rendered = create_examples_string("feat: add foo\nfix: handle bar\n");
+        assert!(!rendered.contains("\n- "));
+    }
 }

@@ -122,3 +122,56 @@ pub fn validate_context_policy(policy: &ContextPolicy) -> Result<(), Box<dyn Err
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_policy() -> ContextPolicy {
+        ContextPolicy {
+            token_char_ratio: 4,
+            budgets: ContextBudgets {
+                primary_tokens: 4000,
+                fallback_tokens: 2000,
+                minimal_tokens: 1000,
+            },
+            sections: vec![
+                ContextSection {
+                    source: ContextSource::Summary,
+                    header: "Summary:\n".to_string(),
+                    max_ratio: 0.7,
+                    required: true,
+                },
+                ContextSection {
+                    source: ContextSource::Diff,
+                    header: "\nDiff:\n".to_string(),
+                    max_ratio: 0.3,
+                    required: false,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn validate_context_policy_accepts_valid_policy() {
+        let policy = valid_policy();
+        assert!(validate_context_policy(&policy).is_ok());
+    }
+
+    #[test]
+    fn validate_context_policy_requires_required_section() {
+        let mut policy = valid_policy();
+        for section in &mut policy.sections {
+            section.required = false;
+        }
+        assert!(validate_context_policy(&policy).is_err());
+    }
+
+    #[test]
+    fn validate_context_policy_rejects_invalid_ratio_sum() {
+        let mut policy = valid_policy();
+        policy.sections[0].max_ratio = 0.8;
+        policy.sections[1].max_ratio = 0.4;
+        assert!(validate_context_policy(&policy).is_err());
+    }
+}

@@ -16,6 +16,7 @@ pub enum StepStatus {
 }
 
 pub struct Ui {
+    step_labels: Vec<String>,
     steps_total: usize,
     current_step: usize,
     current_label: String,
@@ -33,15 +34,22 @@ impl Ui {
     pub fn start(step_labels: &[&str]) -> Result<Self, Box<dyn Error>> {
         let mut stdout = io::stdout();
         stdout.execute(Hide)?;
-        let label = step_labels
-            .first()
-            .copied()
-            .unwrap_or("Starting")
-            .to_string();
+        let step_labels: Vec<String> = if step_labels.is_empty() {
+            vec!["Starting".to_string()]
+        } else {
+            step_labels
+                .iter()
+                .map(|label| (*label).to_string())
+                .collect()
+        };
+        let steps_total = step_labels.len().max(1);
+        let current_step = 1;
+        let label = format_step_line(current_step, steps_total, &step_labels[0]);
 
         Ok(Self {
-            steps_total: step_labels.len().max(1),
-            current_step: 1,
+            step_labels,
+            steps_total,
+            current_step,
             current_label: label,
             spinner_index: 0,
             last_tick: Instant::now(),
@@ -64,16 +72,22 @@ impl Ui {
     }
 
     pub fn set_step_status(&mut self, index: usize, status: StepStatus) {
-        if status == StepStatus::Running {
-            self.current_step = index.saturating_add(1);
+        match status {
+            StepStatus::Running => {
+                self.current_step = index.saturating_add(1);
+                let step_label = self
+                    .step_labels
+                    .get(index)
+                    .map_or("Working", String::as_str);
+                self.current_label =
+                    format_step_line(self.current_step, self.steps_total, step_label);
+            }
+            StepStatus::Done => {
+                if index.saturating_add(1) >= self.steps_total {
+                    self.current_label = "Completed".to_string();
+                }
+            }
         }
-
-        let label = match status {
-            StepStatus::Running => format!("Step {} of {}", self.current_step, self.steps_total),
-            StepStatus::Done => "Completed".to_string(),
-        };
-
-        self.current_label = label;
     }
 
     pub fn set_error(&mut self) {
@@ -126,6 +140,10 @@ impl Ui {
     }
 }
 
+fn format_step_line(step: usize, total: usize, label: &str) -> String {
+    format!("Step {step} of {total} — {label}")
+}
+
 impl Drop for Ui {
     fn drop(&mut self) {
         if self.shutdown {
@@ -136,5 +154,18 @@ impl Drop for Ui {
         let mut stdout = io::stdout();
         let _ = stdout.execute(Show);
         let _ = stdout.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_step_line_matches_expected_output() {
+        assert_eq!(
+            format_step_line(3, 6, "Collect staged changes"),
+            "Step 3 of 6 — Collect staged changes"
+        );
     }
 }

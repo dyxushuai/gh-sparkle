@@ -26,6 +26,7 @@ jobs:
               - 'Cargo.lock'
               - 'src/**'
               - 'assets/**'
+              - 'fuzz/**'
               - '.github/workflows/**'
 
   fmt:
@@ -78,3 +79,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run --no-fail-fast -j num-cpus
+
+  fuzz:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: rui314/setup-mold@v1
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: "v0.10.0"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version 0.13.1
+      - name: Run fuzz target
+        run: |
+          target=$(rustc -vV | awk '/^host:/ {print $2}')
+          cargo fuzz run commit_message --target "$target" --target-dir target/fuzz -- -max_total_time=20
+          cargo fuzz run context_policy --target "$target" --target-dir target/fuzz -- -max_total_time=20
