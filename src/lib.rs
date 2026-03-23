@@ -12,7 +12,7 @@ use std::error::Error;
 use std::time::{Duration, Instant};
 
 const EXTENSION_NAME: &str = "sparkle";
-const DEFAULT_MODEL: &str = "openai/gpt-5-mini";
+const DEFAULT_MODEL: &str = "openai/gpt-4o-mini";
 const MAX_EXAMPLES: usize = 20;
 
 #[derive(Parser)]
@@ -585,6 +585,13 @@ fn resolve_model_chain(
         return Ok(policy.auto_models.clone());
     }
 
+    if !requested.contains('/') {
+        return Err(format!(
+            "model must use the full GitHub Models id in the form <provider>/<model>, got '{requested}'. Examples: 'openai/gpt-5-mini', 'xai/grok-3-mini'. Copy the exact id from the GitHub Models Code tab or Marketplace page."
+        )
+        .into());
+    }
+
     Ok(vec![requested.to_string()])
 }
 
@@ -619,6 +626,25 @@ mod tests {
         assert!(parse_examples_count(Some("0".to_string())).is_err());
         assert!(parse_examples_count(Some("21".to_string())).is_err());
         assert!(parse_examples_count(Some("nope".to_string())).is_err());
+    }
+
+    #[test]
+    fn resolve_model_chain_accepts_fully_qualified_model_id() {
+        let policy = prompt::ModelPolicy::default();
+
+        let model_chain = resolve_model_chain("openai/gpt-5-mini", &policy).unwrap();
+
+        assert_eq!(model_chain, vec!["openai/gpt-5-mini".to_string()]);
+    }
+
+    #[test]
+    fn resolve_model_chain_rejects_bare_model_name() {
+        let policy = prompt::ModelPolicy::default();
+
+        let error = resolve_model_chain("raptor-mini", &policy).unwrap_err();
+
+        assert!(error.to_string().contains("<provider>/<model>"));
+        assert!(error.to_string().contains("raptor-mini"));
     }
 
     #[test]

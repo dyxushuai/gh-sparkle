@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::prompt::PromptConfig;
 
-const GITHUB_MODELS_API_VERSION: &str = "2022-11-28";
+const GITHUB_MODELS_API_VERSION: &str = "2026-03-10";
 const GITHUB_MODELS_ENDPOINT: &str = "https://models.github.ai/inference/chat/completions";
 const MAX_ERROR_BODY_BYTES: u64 = 8 * 1024;
 const MAX_RETRY_ATTEMPTS: usize = 4;
@@ -20,16 +20,44 @@ const BASE_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(4);
 const USER_AGENT: &str = concat!("gh-sparkle/", env!("CARGO_PKG_VERSION"));
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct Request {
     messages: Vec<Message>,
     model: String,
-    temperature: f64,
-    top_p: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f64>,
     stream: bool,
 }
 
-#[derive(Serialize)]
+impl Request {
+    fn from_prompt_config(
+        messages: Vec<Message>,
+        model: &str,
+        prompt_config: &PromptConfig,
+    ) -> Self {
+        Self {
+            messages,
+            model: model.to_string(),
+            temperature: Some(prompt_config.model_parameters.temperature),
+            top_p: Some(prompt_config.model_parameters.top_p),
+            stream: false,
+        }
+    }
+
+    fn without_sampling_parameters(mut self) -> Self {
+        self.temperature = None;
+        self.top_p = None;
+        self
+    }
+
+    fn has_sampling_parameters(&self) -> bool {
+        self.temperature.is_some() || self.top_p.is_some()
+    }
+}
+
+#[derive(Clone, Serialize)]
 struct Message {
     role: String,
     content: String,
@@ -80,15 +108,18 @@ impl Client {
     ) -> Result<String, Box<dyn Error>> {
         let messages = build_messages(prompt_config, changes_summary, language, examples);
 
-        let request = Request {
-            messages,
-            model: model.to_string(),
-            temperature: prompt_config.model_parameters.temperature,
-            top_p: prompt_config.model_parameters.top_p,
-            stream: false,
-        };
+        let mut request = Request::from_prompt_config(messages, model, prompt_config);
 
-        let response = self.call_github_models(&request)?;
+        let response = match self.call_github_models(&request) {
+            Ok(response) => response,
+            Err(err)
+                if request.has_sampling_parameters() && err.is_sampling_parameter_unsupported() =>
+            {
+                request = request.without_sampling_parameters();
+                self.call_github_models(&request)?
+            }
+            Err(err) => return Err(Box::new(err)),
+        };
 
         let content = response
             .choices
@@ -102,7 +133,7 @@ impl Client {
         Ok(content)
     }
 
-    fn call_github_models(&self, request: &Request) -> Result<Response, Box<dyn Error>> {
+    fn call_github_models(&self, request: &Request) -> Result<Response, ModelsRequestError> {
         let mut attempt = 0usize;
         let mut backoff = BASE_BACKOFF;
         let mut last_error: Option<ModelsRequestError> = None;
@@ -133,6 +164,8 @@ impl Client {
 
         let mut final_error = last_error.unwrap_or_else(|| ModelsRequestError {
             message: "GitHub Models request failed".to_string(),
+            status: None,
+            response_body: None,
             retry_after: None,
             retryable: false,
         });
@@ -144,7 +177,7 @@ impl Client {
             );
         }
 
-        Err(Box::new(final_error))
+        Err(final_error)
     }
 
     fn call_github_models_once(&self, request: &Request) -> Result<Response, ModelsRequestError> {
@@ -159,6 +192,8 @@ impl Client {
             .send()
             .map_err(|err| ModelsRequestError {
                 message: format!("network error: {err}"),
+                status: None,
+                response_body: None,
                 retry_after: None,
                 retryable: err.is_timeout() || err.is_connect(),
             })?;
@@ -169,6 +204,8 @@ impl Client {
                 .json::<Response>()
                 .map_err(|err| ModelsRequestError {
                     message: format!("failed to decode response: {err}"),
+                    status: Some(status),
+                    response_body: None,
                     retry_after: None,
                     retryable: false,
                 });
@@ -188,6 +225,8 @@ impl Client {
 
         Err(ModelsRequestError {
             message,
+            status: Some(status),
+            response_body: Some(body),
             retry_after,
             retryable,
         })
@@ -197,8 +236,51 @@ impl Client {
 #[derive(Debug)]
 struct ModelsRequestError {
     message: String,
+    status: Option<StatusCode>,
+    response_body: Option<String>,
     retry_after: Option<Duration>,
     retryable: bool,
+}
+
+impl ModelsRequestError {
+    fn is_sampling_parameter_unsupported(&self) -> bool {
+        if self.status != Some(StatusCode::BAD_REQUEST) {
+            return false;
+        }
+
+        let Some(body) = &self.response_body else {
+            return false;
+        };
+        let Ok(parsed) = serde_json::from_str::<ErrorEnvelope>(body) else {
+            return false;
+        };
+        let Some(param) = parsed.error.param.as_deref() else {
+            return false;
+        };
+
+        if !matches!(param, "temperature" | "top_p" | "topP") {
+            return false;
+        }
+
+        parsed.error.code.as_deref() == Some("unsupported_value")
+            || parsed
+                .error
+                .message
+                .to_lowercase()
+                .contains("only the default")
+    }
+}
+
+#[derive(Deserialize)]
+struct ErrorEnvelope {
+    error: ErrorDetail,
+}
+
+#[derive(Deserialize)]
+struct ErrorDetail {
+    message: String,
+    param: Option<String>,
+    code: Option<String>,
 }
 
 impl std::fmt::Display for ModelsRequestError {
@@ -370,5 +452,47 @@ mod tests {
     fn create_examples_string_is_not_a_markdown_list() {
         let rendered = create_examples_string("feat: add foo\nfix: handle bar\n");
         assert!(!rendered.contains("\n- "));
+    }
+
+    #[test]
+    fn request_omits_sampling_parameters_when_none() {
+        let request = Request {
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: "hello".to_string(),
+            }],
+            model: "openai/gpt-5-mini".to_string(),
+            temperature: None,
+            top_p: None,
+            stream: false,
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(!serialized.contains("temperature"));
+        assert!(!serialized.contains("top_p"));
+    }
+
+    #[test]
+    fn models_request_error_detects_unsupported_sampling_parameter() {
+        let unsupported = ModelsRequestError {
+            message: "bad request".to_string(),
+            status: Some(StatusCode::BAD_REQUEST),
+            response_body: Some(
+                "{\"error\":{\"message\":\"Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported.\",\"param\":\"temperature\",\"code\":\"unsupported_value\"}}"
+                    .to_string(),
+            ),
+            retry_after: None,
+            retryable: false,
+        };
+        let unauthorized = ModelsRequestError {
+            message: "unauthorized".to_string(),
+            status: Some(StatusCode::UNAUTHORIZED),
+            response_body: None,
+            retry_after: None,
+            retryable: false,
+        };
+
+        assert!(unsupported.is_sampling_parameter_unsupported());
+        assert!(!unauthorized.is_sampling_parameter_unsupported());
     }
 }

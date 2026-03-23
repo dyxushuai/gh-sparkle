@@ -17,7 +17,7 @@ action. I wanted the same flow inside `gh`: stage, generate, commit.
 
 - Copilot-style commit message generation from staged diffs
 - Handles large changes with summary + trimming
-- Defaults to `openai/gpt-5-mini` with safe input trimming for large changes
+- Defaults to `openai/gpt-4o-mini` with safe input trimming for large changes
 - Supports `--language`, `--examples`, and `--model`
 - Commits staged changes automatically
 
@@ -44,7 +44,9 @@ gh sparkle
 - `-e, --examples[=<N>]`: Include recent commit messages as examples.
   If provided without a value, it uses `3`. Valid range: `1..=20`.
 - `-m, --model <MODEL>`: GitHub Models model to use.
-  Default: `openai/gpt-5-mini`.
+  Default: `openai/gpt-4o-mini`.
+  Use the full GitHub Models id in the form `provider/model`, for example `openai/gpt-4o-mini`
+  or `xai/grok-3-mini`.
   You can still pass `--model auto` to resolve via `modelPolicy.autoModels` in the prompt config,
   tried in order until a request succeeds.
 - `--dry-run` (alias `--no-commit`): Print the generated commit message but do not commit.
@@ -68,6 +70,9 @@ gh sparkle --examples 5
 
 # Use a different GitHub Models model
 gh sparkle --model xai/grok-3-mini
+
+# Provider prefix is required; bare names like `raptor-mini` will fail validation
+gh sparkle --model openai/gpt-4o-mini
 ```
 
 ## Prerequisites
