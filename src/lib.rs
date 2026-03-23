@@ -12,7 +12,7 @@ use std::error::Error;
 use std::time::{Duration, Instant};
 
 const EXTENSION_NAME: &str = "sparkle";
-const DEFAULT_MODEL: &str = "auto";
+const DEFAULT_MODEL: &str = "openai/gpt-4o-mini";
 const MAX_EXAMPLES: usize = 20;
 
 #[derive(Parser)]
